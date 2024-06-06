@@ -28,13 +28,13 @@ input int                Signal_ThresholdOpen =10;          // Signal threshold 
 input int                Signal_ThresholdClose=10;          // Signal threshold value to close [0...100]
 input double             Signal_PriceLevel    =0.0;         // Price level to execute a deal
 input double             Signal_StopLevel     =50.0;        // Stop Loss level (in points)
-input double             Signal_TakeLevel     =50.0;        // Take Profit level (in points)
+input double             Signal_TakeLevel     =80.0;        // Take Profit level (in points)
 input int                Signal_Expiration    =4;           // Expiration of pending orders (in bars)
 input int                Signal_RSI_PeriodRSI =15;          // Relative Strength Index(15,...) Period of calculation
 input ENUM_APPLIED_PRICE Signal_RSI_Applied   =PRICE_CLOSE; // Relative Strength Index(15,...) Prices series
 input double             Signal_RSI_Weight    =1.0;         // Relative Strength Index(15,...) Weight [0...1.0]
 //--- inputs for trailing
-input int                Trailing_MA_Period   =200;         // Period of MA
+input int                Trailing_MA_Period   =50;          // Period of MA
 input int                Trailing_MA_Shift    =0;           // Shift of MA
 input ENUM_MA_METHOD     Trailing_MA_Method   =MODE_EMA;    // Method of averaging
 input ENUM_APPLIED_PRICE Trailing_MA_Applied  =PRICE_CLOSE; // Prices series
