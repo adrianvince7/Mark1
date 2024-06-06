@@ -49,8 +49,17 @@ CExpert ExtExpert;
 //+------------------------------------------------------------------+
 int OnInit()
   {
+//--- Ensure the chart is on the 5-minute timeframe
+   if (Period() != PERIOD_M5)
+     {
+      if(!ChartSetSymbolPeriod(0, NULL, PERIOD_M5))
+        {
+         printf(__FUNCTION__+": error setting chart to 5-minute timeframe");
+         return(INIT_FAILED);
+        }
+     }
 //--- Initializing expert
-   if(!ExtExpert.Init(Symbol(),Period(),Expert_EveryTick,Expert_MagicNumber))
+   if(!ExtExpert.Init(Symbol(),PERIOD_M5,Expert_EveryTick,Expert_MagicNumber))
      {
       //--- failed
       printf(__FUNCTION__+": error initializing expert");
