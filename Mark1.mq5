@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2024, Avanzamos Africa Pty LTD"
 #property link      "https://avanzamos.africa"
-#property version   "1.03"
+#property version   "1.07"
 //+------------------------------------------------------------------+
 //| Include                                                          |
 //+------------------------------------------------------------------+
@@ -15,10 +15,15 @@
 #include <Expert\Signal\SignalMA.mqh>
 #include <Expert\Signal\SignalMACD.mqh>
 #include <Expert\Signal\SignalCCI.mqh>
+//--- custom signals
+#include <Avanzamos\SignalBollingerBands.mqh>
 //--- available trailing
 #include <Expert\Trailing\TrailingMA.mqh>
+#include <Expert\Trailing\TrailingParabolicSAR.mqh>
 //--- available money management
 #include <Expert\Money\MoneyFixedRisk.mqh>
+//--- custom volume indicator
+#include <Avanzamos\CCustomVolume.mqh>
 //+------------------------------------------------------------------+
 //| Inputs                                                           |
 //+------------------------------------------------------------------+
@@ -31,7 +36,9 @@ input int                Signal_ThresholdOpen =20;          // Signal threshold 
 input int                Signal_ThresholdClose=20;          // Signal threshold value to close [0...100]
 input double             Signal_PriceLevel    =0.0;         // Price level to execute a deal
 input double             Signal_StopLevel     =100.0;       // Stop Loss level (in points)
-input double             Signal_TakeLevel     =150.0;       // Take Profit level (in points)
+input double             Signal_TakeLevel1    =50.0;        // Take Profit level 1 (in points)
+input double             Signal_TakeLevel2    =100.0;       // Take Profit level 2 (in points)
+input double             Signal_TakeLevel3    =150.0;       // Take Profit level 3 (in points)
 input int                Signal_Expiration    =4;           // Expiration of pending orders (in bars)
 input int                Signal_RSI_PeriodRSI =14;          // Relative Strength Index(14,...) Period of calculation
 input ENUM_APPLIED_PRICE Signal_RSI_Applied   =PRICE_CLOSE; // Relative Strength Index(14,...) Prices series
@@ -41,23 +48,26 @@ input int                Trailing_MA_Period   =50;          // Period of MA
 input int                Trailing_MA_Shift    =0;           // Shift of MA
 input ENUM_MA_METHOD     Trailing_MA_Method   =MODE_EMA;    // Method of averaging
 input ENUM_APPLIED_PRICE Trailing_MA_Applied  =PRICE_CLOSE; // Prices series
+input double             Trailing_PSAR_Step   =0.02;        // Parabolic SAR step
+input double             Trailing_PSAR_Max    =0.2;         // Parabolic SAR maximum
 //--- inputs for money
-input double             Money_FixRisk_Percent=1.0;         // Risk percentage
+input double             Money_FixRisk_Percent=0.5;         // Risk percentage
+input int                ATR_Period           =14;          // ATR period for dynamic position sizing
+input double             ATR_Multiplier       =1.0;         // ATR multiplier for position sizing
 //--- inputs for additional filters
 input ENUM_TIMEFRAMES    Filter_MA_Period     =PERIOD_M5;   // Period of the Moving Average for trend filter
 input ENUM_MA_METHOD     Filter_MA_Method     =MODE_SMA;    // Method of averaging for trend filter
-input double             ATR_Period           =14;          // ATR period for volatility filter
-input double             ATR_Multiplier       =2.0;         // ATR multiplier for stop loss calculation
 input double             Max_Drawdown_Percent =30.0;        // Max drawdown percentage before halting trading
 //--- inputs for trading hours
-input int                Trade_Start_Hour     =2;           // Start hour for trading
-input int                Trade_End_Hour       =22;          // End hour for trading
+input int                Trade_Start_Hour     =6;           // Start hour for trading
+input int                Trade_End_Hour       =20;          // End hour for trading
 //+------------------------------------------------------------------+
 //| Global expert object                                             |
 //+------------------------------------------------------------------+
 CExpert ExtExpert;
 double initial_balance;
 double max_drawdown_allowed;
+double atr_value;
 //+------------------------------------------------------------------+
 //| Initialization function of the expert                            |
 //+------------------------------------------------------------------+
@@ -98,7 +108,7 @@ int OnInit()
    signal.ThresholdClose(Signal_ThresholdClose);
    signal.PriceLevel(Signal_PriceLevel);
    signal.StopLevel(Signal_StopLevel);
-   signal.TakeLevel(Signal_TakeLevel);
+   signal.TakeLevel(Signal_TakeLevel3);  // Use the highest take profit level for initialization
    signal.Expiration(Signal_Expiration);
 //--- Creating filter CSignalRSI
    CSignalRSI *filter0=new CSignalRSI;
@@ -126,29 +136,89 @@ int OnInit()
    trendFilter.Period(Filter_MA_Period); // Correct enum type for Period
    trendFilter.Method(Filter_MA_Method);
    signal.AddFilter(trendFilter);
-//--- Creation of trailing object
-   CTrailingMA *trailing=new CTrailingMA;
-   if(trailing==NULL)
+//--- Creating MACD filter
+   CSignalMACD *macdFilter=new CSignalMACD;
+   if(macdFilter==NULL)
      {
       //--- failed
-      printf(__FUNCTION__+": error creating trailing");
+      printf(__FUNCTION__+": error creating MACD filter");
       ExtExpert.Deinit();
       return(INIT_FAILED);
      }
-//--- Add trailing to expert (will be deleted automatically))
-   if(!ExtExpert.InitTrailing(trailing))
+   signal.AddFilter(macdFilter);
+//--- Creating CCI filter
+   CSignalCCI *cciFilter=new CSignalCCI;
+   if(cciFilter==NULL)
      {
       //--- failed
-      printf(__FUNCTION__+": error initializing trailing");
+      printf(__FUNCTION__+": error creating CCI filter");
       ExtExpert.Deinit();
       return(INIT_FAILED);
      }
-//--- Set trailing parameters
-   trailing.Period(Trailing_MA_Period);
-   trailing.Shift(Trailing_MA_Shift);
-   trailing.Method(Trailing_MA_Method);
-   trailing.Applied(Trailing_MA_Applied);
-//--- Creation of money object
+   signal.AddFilter(cciFilter);
+//--- Creating custom Bollinger Bands filter
+   CSignalBollingerBands *bbFilter=new CSignalBollingerBands;
+   if(bbFilter==NULL)
+     {
+      //--- failed
+      printf(__FUNCTION__+": error creating custom Bollinger Bands filter");
+      ExtExpert.Deinit();
+      return(INIT_FAILED);
+     }
+   signal.AddFilter(bbFilter);
+//--- Creating custom volume indicator
+   CCustomVolume *volumeFilter=new CCustomVolume;
+   if(volumeFilter==NULL)
+     {
+      //--- failed
+      printf(__FUNCTION__+": error creating volume filter");
+      ExtExpert.Deinit();
+      return(INIT_FAILED);
+     }
+   signal.AddFilter(volumeFilter);
+//--- Creation of trailing MA object
+   CTrailingMA *trailingMA=new CTrailingMA;
+   if(trailingMA==NULL)
+     {
+      //--- failed
+      printf(__FUNCTION__+": error creating trailingMA");
+      ExtExpert.Deinit();
+      return(INIT_FAILED);
+     }
+//--- Add trailing MA to expert (will be deleted automatically)
+   if(!ExtExpert.InitTrailing(trailingMA))
+     {
+      //--- failed
+      printf(__FUNCTION__+": error initializing trailingMA");
+      ExtExpert.Deinit();
+      return(INIT_FAILED);
+     }
+//--- Set trailing MA parameters
+   trailingMA.Period(Trailing_MA_Period);
+   trailingMA.Shift(Trailing_MA_Shift);
+   trailingMA.Method(Trailing_MA_Method);
+   trailingMA.Applied(Trailing_MA_Applied);
+//--- Creation of Parabolic SAR trailing object
+   CTrailingPSAR *trailingPSAR=new CTrailingPSAR;
+   if(trailingPSAR==NULL)
+     {
+      //--- failed
+      printf(__FUNCTION__+": error creating trailingPSAR");
+      ExtExpert.Deinit();
+      return(INIT_FAILED);
+     }
+//--- Add trailing PSAR to expert (will be deleted automatically)
+   if(!ExtExpert.InitTrailing(trailingPSAR))
+     {
+      //--- failed
+      printf(__FUNCTION__+": error initializing trailingPSAR");
+      ExtExpert.Deinit();
+      return(INIT_FAILED);
+     }
+//--- Set trailing PSAR parameters
+   trailingPSAR.Step(Trailing_PSAR_Step);
+   trailingPSAR.Maximum(Trailing_PSAR_Max);
+//--- Creation of money object with dynamic position sizing
    CMoneyFixedRisk *money=new CMoneyFixedRisk;
    if(money==NULL)
      {
@@ -157,7 +227,7 @@ int OnInit()
       ExtExpert.Deinit();
       return(INIT_FAILED);
      }
-//--- Add money to expert (will be deleted automatically))
+//--- Add money to expert (will be deleted automatically)
    if(!ExtExpert.InitMoney(money))
      {
       //--- failed
@@ -182,6 +252,8 @@ int OnInit()
       ExtExpert.Deinit();
       return(INIT_FAILED);
      }
+//--- Calculate ATR for dynamic position sizing
+   atr_value = iATR(Symbol(), PERIOD_M5, ATR_Period) * ATR_Multiplier;
 //--- ok
    return(INIT_SUCCEEDED);
   }
@@ -213,6 +285,7 @@ void OnTick()
       printf("Max drawdown limit reached. Halting trading.");
       return;
      }
+
    ExtExpert.OnTick();
   }
 //+------------------------------------------------------------------+
