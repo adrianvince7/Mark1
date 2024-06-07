@@ -11,8 +11,8 @@
 //+------------------------------------------------------------------+
 #include <Expert\Expert.mqh>
 #include <Trade\Trade.mqh>
-#include "Mark1\MoneyManagement\CMoneyManager.mqh"
-#include "Mark1\Strategy\CSignalManager.mqh"
+#include "\MoneyManagement\CMoneyManager.mqh"
+#include "\Strategy\CSignalManager.mqh"
 
 //+------------------------------------------------------------------+
 //| Inputs                                                           |
